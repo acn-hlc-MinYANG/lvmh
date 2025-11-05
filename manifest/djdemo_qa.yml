@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: djdemo-deployment
+  labels:
+    app: djdemo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: djdemo
+  template:
+    metadata:
+      labels:
+        app: djdemo
+    spec:
+      containers:
+      - name: djdemo
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1048Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        ports:
+        - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: djdemo-service
+spec:
+  selector:
+    app: djdemo
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

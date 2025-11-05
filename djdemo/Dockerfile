@@ -1,5 +1,6 @@
 FROM python:3.13-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl-dev libffi8 libsasl2-dev libldap2-dev libpq5 libjpeg62-turbo zlib1g \
-    libxml2 libpcre2-8-0 media-types default-libmysqlclient-dev build-essential pkg-config && \
-    rm -rf /var/lib/apt/lists/*
+COPY . /app
+WORKDIR /app
+RUN pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
+EXPOSE 8000
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

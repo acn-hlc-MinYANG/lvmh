@@ -1,0 +1,108 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DJDEMO_IMAGE_NAME: "${{ vars.ALIYUN_ACR_REGISTRY }}/${{ vars.ALIYUN_ACR_NAMESPACE}}/djdemo"
+  GAME_IMAGE_NAME: "${{ vars.ALIYUN_ACR_REGISTRY }}/${{ vars.ALIYUN_ACR_NAMESPACE}}/game"
+  MANIFEST_PATH: "manifest"
+
+jobs:
+  build:
+    runs-on: [self-hosted, LVMH]
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v5
+
+      - name: Generate IMAGE_TAG
+        run: |
+          IMAGE_TAG=$(TZ='Asia/Shanghai' date +"%Y%m%d%H%M%S")
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+
+      - name: build djdemo image
+        run: |
+          cd djdemo
+          docker build -t ${DJDEMO_IMAGE_NAME}:${IMAGE_TAG} .
+
+      - name: build game image
+        run: |
+          cd game
+          docker build -t ${GAME_IMAGE_NAME}:${IMAGE_TAG} .
+
+      - name: login ACR
+        uses: aliyun/acr-login@v1
+        with:
+          login-server: "https://${{ vars.ALIYUN_ACR_REGISTRY }}"
+          region-id: "${{vars.ALIYUN_REGION_ID}}"
+          access-key-id: "${{ secrets.ACCESS_KEY_ID }}"
+          access-key-secret: "${{ secrets.ACCESS_KEY_SECRET }}"
+          instance-id: "${{ vars.ALIYUN_ACR_INSTANCE_ID }}"
+
+      - name: push djdemo image
+        run: docker push ${DJDEMO_IMAGE_NAME}:${IMAGE_TAG}
+
+      - name: push game image
+        run: docker push ${GAME_IMAGE_NAME}:${IMAGE_TAG}
+
+      - name: update manifest
+        run: |
+          sed -i "s|\${IMAGE}|${DJDEMO_IMAGE_NAME}:${IMAGE_TAG}|g" ${MANIFEST_PATH}/djdemo_qa.yml        
+          sed -i "s|\${IMAGE}|${DJDEMO_IMAGE_NAME}:${IMAGE_TAG}|g" ${MANIFEST_PATH}/djdemo_prod.yml        
+          sed -i "s|\${IMAGE}|${GAME_IMAGE_NAME}:${IMAGE_TAG}|g" ${MANIFEST_PATH}/game_qa.yml
+          sed -i "s|\${IMAGE}|${GAME_IMAGE_NAME}:${IMAGE_TAG}|g" ${MANIFEST_PATH}/game_prod.yml
+
+      - name: upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest
+          path: ${MANIFEST_PATH}/**/*
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: clean images
+        run: |
+          docker rmi ${DJDEMO_IMAGE_NAME}:${IMAGE_TAG}
+          docker rmi ${GAME_IMAGE_NAME}:${IMAGE_TAG}
+
+  deploy:
+    runs-on: [self-hosted, LVMH]
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - environment: "QA"
+            djdemo_deploy_file: "djdemo_qa.yaml"
+            game_deploy_file: "game_qa.yaml"
+          - environment: "PRODUCTION"
+            djdemo_deploy_file: "djdemo_prod.yaml"
+            game_deploy_file: "game_prod.yaml"
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: remove old Manifests
+        run: rm -rf ${MANIFEST_PATH}
+
+      - name: download Manifests
+        uses: actions/download-artifact@v5
+        with:
+          name: manifest
+          path: ${MANIFEST_PATH}
+
+      - name: ACK set context
+        uses: aliyun/ack-set-context@v1
+        with:
+          access-key-id: "${{ secrets.ACCESS_KEY_ID }}"
+          access-key-secret: "${{ secrets.ACCESS_KEY_SECRET }}"
+          cluster-id: "${{ vars.ACK_CLUSTER_ID }}"
+
+      - name: Deploy
+        run: |
+          
+          kubectl apply -f ${MANIFEST_PATH}/${{ matrix.djdemo_deploy_file }}
+          kubectl apply -f ${MANIFEST_PATH}/${{ matrix.game_deploy_file }}
